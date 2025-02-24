@@ -14,6 +14,7 @@ from docker.models.containers import Container
 
 HEREDOC_DELIMITER = "EOF_1399519320"  # different from dataset HEREDOC_DELIMITERs!
 
+_docker_lock = threading.Lock()
 
 def copy_to_container(container: Container, src: Path, dst: Path):
     """
@@ -259,8 +260,20 @@ def list_images(client: docker.DockerClient):
     """
     List all images from the Docker client.
     """
-    # don't use this in multi-threaded context
-    return {tag for i in client.images.list(all=True) for tag in i.tags}
+    try:
+        # Get raw list of images first
+        resp = client.api.images()
+        images = []
+        for r in resp:
+            try:
+                images.append(client.images.get(r["Id"]))
+            except docker.errors.ImageNotFound:
+                # Skip images that were removed during listing
+                continue
+        return {tag for img in images for tag in img.tags}
+    except docker.errors.APIError as e:
+        logging.warning(f"Error listing images: {e}")
+        return set()
 
 
 def clean_images(
